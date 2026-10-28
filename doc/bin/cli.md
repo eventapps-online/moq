@@ -245,6 +245,13 @@ See [Authentication](/bin/relay/auth).
 groups fetchable, which the [HLS gateway](/bin/hls) depends on. `export --max-age` (default 500 ms) is how long *this* consumer waits for a
 stalled group before skipping. Raising the first never delays playback.
 
+## Catalog extensions
+
+`import --catalog-ext '{"myapp":{"delay":250}}'` (or `--catalog-ext-file`)
+adds application root sections to every published catalog. The value must be a
+JSON object and base sections (`video`, `audio`, ...) are refused at startup.
+Supported by the `fmp4`, `flv` and `avc3` stdin containers.
+
 ## Debugging
 
 `RUST_LOG=debug` prints the negotiated version and every subscription.

@@ -1,5 +1,6 @@
 use anyhow::Context;
 use hang::moq_net;
+use moq_mux::catalog::hang::Extra;
 use moq_mux::container::{flv, fmp4, ts};
 
 /// Container format read from stdin on the import (source) side.
@@ -159,11 +160,11 @@ enum PublishDecoder {
 		split: Box<moq_mux::codec::h264::Split>,
 		import: Box<moq_mux::codec::h264::Import>,
 	},
-	Fmp4(Box<fmp4::Import>),
+	Fmp4(Box<fmp4::Import<Extra>>),
 	// TS carries undecoded elementary streams (SCTE-35, teletext, DVB AC-3, ...)
 	// verbatim, so it uses the `mpegts` catalog extension rather than the media-only `()`.
 	Ts(Box<ts::Import<ts::Ext>>),
-	Flv(Box<flv::Import>),
+	Flv(Box<flv::Import<Extra>>),
 }
 
 impl PublishDecoder {
@@ -254,16 +255,20 @@ impl Publish {
 	/// `broadcast`. Announce the broadcast afterwards: this constructor creates
 	/// the catalog tracks, so announcing after it lands the advertisement with
 	/// the tracks already in place.
+	///
+	/// `ext` holds extra root sections (`--catalog-ext`) carried by every catalog publish.
 	pub fn new(
 		mut broadcast: moq_net::broadcast::Producer,
 		format: &PublishFormat,
 		config: moq_mux::catalog::Config,
+		ext: Extra,
 	) -> anyhow::Result<Self> {
 		// TS carries undecoded elementary streams (SCTE-35, teletext, DVB AC-3, ...)
 		// verbatim, so it uses the `mpegts` catalog extension rather than the media-only
 		// `()`. The catalog producer owns the broadcast's catalog tracks, so each broadcast
-		// gets exactly one; TS builds its `Ext` catalog here instead of the shared `()` below.
+		// gets exactly one; TS builds its `Ext` catalog here instead of the shared `Extra` below.
 		if let PublishFormat::Ts = format {
+			anyhow::ensure!(ext.is_empty(), "--catalog-ext is not supported with ts");
 			let config = config.with_catalog(moq_mux::catalog::hang::Catalog::<ts::Ext>::default());
 			let catalog = moq_mux::catalog::Producer::new(&mut broadcast, config)?;
 			let ts = ts::Import::new(broadcast.clone(), catalog.reserve());
@@ -273,7 +278,9 @@ impl Publish {
 			});
 		}
 
-		let catalog = moq_mux::catalog::Producer::new(&mut broadcast, config)?;
+		let mut root = moq_mux::catalog::hang::Catalog::<Extra>::default();
+		root.ext = ext;
+		let catalog = moq_mux::catalog::Producer::new(&mut broadcast, config.with_catalog(root))?;
 		let source = match format {
 			PublishFormat::Avc3 => {
 				let track = broadcast.unique_track(".avc3", catalog.track_info(hang::catalog::PRIORITY.video))?;
@@ -683,7 +690,7 @@ mod tests {
 		let origin = moq_tokio::origin::spawn();
 		let broadcast = origin.create_broadcast("cli").unwrap();
 		settle().await;
-		let mut publish = Publish::new(broadcast, &PublishFormat::Ts, Default::default()).unwrap();
+		let mut publish = Publish::new(broadcast, &PublishFormat::Ts, Default::default(), Default::default()).unwrap();
 		#[allow(irrefutable_let_patterns)]
 		let Source::Stream(decoder) = &mut publish.source else {
 			panic!("expected a stream source");

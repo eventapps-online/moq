@@ -582,6 +582,7 @@ fn spawn_import(
 	};
 
 	let mut local = None;
+	let ext = import.catalog_ext()?;
 
 	if let Some(format) = import.source.stdin_format() {
 		warn_if_missing_format(&name);
@@ -589,10 +590,11 @@ fn spawn_import(
 		let config = moq_mux::catalog::Config::default()
 			.with_max_age(max_age)
 			.with_bandwidth(bandwidth.clone());
-		let publish = Publish::new(broadcast, &format, config)?;
+		let publish = Publish::new(broadcast, &format, config, ext)?;
 		publish.announce()?;
 		local = Some(publish);
 	} else {
+		anyhow::ensure!(ext.is_empty(), "--catalog-ext only applies to the stdin containers");
 		match import.source {
 			ImportSource::Hls(hls) => {
 				warn_if_missing_format(&name);

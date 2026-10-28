@@ -697,12 +697,34 @@ pub struct Import {
 	#[usage(long = "latency-max", hide = true)]
 	latency_max: Option<crate::duration::Duration>,
 
+	/// Extra root sections merged into every published catalog, as a JSON object,
+	/// e.g. `{"myapp":{"delay":250}}`. Base sections (`video`, `audio`, ...) are refused.
+	/// Applies to the stdin containers except `ts`.
+	#[usage(long, conflicts = "--catalog-ext-file")]
+	pub catalog_ext: Option<String>,
+
+	/// Read [`Self::catalog_ext`] from a file.
+	#[usage(long)]
+	pub catalog_ext_file: Option<std::path::PathBuf>,
+
 	/// The single source feeding the Origin.
 	#[usage(subcommand)]
 	pub source: ImportSource,
 }
 
 impl Import {
+	/// Parse `--catalog-ext` / `--catalog-ext-file`, so a malformed object fails the launch.
+	pub fn catalog_ext(&self) -> anyhow::Result<moq_mux::catalog::hang::Extra> {
+		let json = match (&self.catalog_ext, &self.catalog_ext_file) {
+			(Some(json), _) => json.clone(),
+			(None, Some(path)) => {
+				std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?
+			}
+			(None, None) => return Ok(Default::default()),
+		};
+		serde_json::from_str(&json).context("invalid --catalog-ext")
+	}
+
 	fn deprecated(&self) -> moq_tokio::cli::Deprecated {
 		let mut found = moq_tokio::cli::Deprecated::default();
 		if self.name.is_some() {
@@ -950,6 +972,24 @@ mod tests {
 		assert_eq!(cli.stages.len(), 1);
 		assert_eq!(cli.stages[0].name(), "import");
 		assert!(cli.validate().is_ok());
+	}
+
+	fn catalog_ext(json: &str) -> anyhow::Result<moq_mux::catalog::hang::Extra> {
+		let cli = Invocation::try_parse_from(["moq", "import", "--catalog-ext", json, "fmp4"]).unwrap();
+		let Command::Import(import) = &cli.stages[0] else {
+			panic!("expected an import stage");
+		};
+		import.catalog_ext()
+	}
+
+	#[test]
+	fn catalog_ext_takes_a_json_object() {
+		let ext = catalog_ext(r#"{"audiocast":{"delay":250}}"#).unwrap();
+		assert_eq!(ext.get("audiocast"), Some(&serde_json::json!({"delay": 250})));
+
+		assert!(catalog_ext("[1]").is_err(), "not an object");
+		assert!(catalog_ext("{").is_err(), "malformed");
+		assert!(catalog_ext(r#"{"audio":{}}"#).is_err(), "reserved section");
 	}
 
 	/// A released spelling is refused, and the error names what to write instead.
